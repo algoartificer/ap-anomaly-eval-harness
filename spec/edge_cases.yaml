@@ -1,0 +1,190 @@
+
+# edge_cases.yaml — hand-injected boundary and sparse-data cases
+# Spec version: 1.1
+#
+# GENERATION ORDER MATTERS:
+#   1. Generate the 500 normal rows from vendors.yaml with a fixed seed
+#   2. FREEZE that output
+#   3. Compute EMPIRICAL per-vendor mean/sd from the frozen sample
+#   4. Compute any amount marked derived: true from those empirical stats
+#   5. Inject
+# A 500-row draw will not reproduce the vendors.yaml parameters exactly.
+# Deriving EC01 from the parameter sd instead of the sample sd lands it at
+# ~2.06 sigma and the boundary test measures nothing.
+#
+# FILL IN predicted_class BEFORE WRITING ANY RULE CODE. Commit it. Then run.
+# The diff between predicted_class and actual output is the artifact.
+
+meta:
+  spec_version: "1.1"
+  total_injected: 12
+  fields: [txn_id, vendor_id, timestamp, amount, txn_type, invoice_no]
+
+cases:
+
+  - id: EC01
+    name: exact_2_sigma_boundary
+    vendor_id: V003
+    amount: { derived: true, formula: "empirical_mean(V003) + 2.0 * empirical_sd(V003)" }
+    timestamp: "2025-11-12T10:14:00"
+    txn_id: T-4450
+    rule_under_test: R1
+    tests: "inclusive >= vs exclusive > at the threshold"
+    expected_class: FLAG
+    flips_if: "R1.comparison implemented as '>' — then NO_FLAG"
+    predicted_class: FLAG
+
+  - id: EC02
+    name: just_under_approval_limit
+    vendor_id: V011
+    amount: 4987.50
+    timestamp: "2025-11-13T14:22:00"
+    txn_id: T-4455
+    rule_under_test: R2
+    tests: "structuring window [4750, 5000); z ~ 1.23 so R1 does not fire"
+    expected_class: FLAG
+    predicted_class: NO_FLAG
+
+  - id: EC03
+    name: just_over_approval_limit
+    vendor_id: V011
+    amount: 5012.00
+    timestamp: "2025-11-14T11:05:00"
+    txn_id: T-4458
+    rule_under_test: R2
+    tests: "directionality — 'near a round number' is not the rule; UNDER it is"
+    expected_class: NO_FLAG
+    predicted_class: NO_FLAG
+
+  - id: EC04
+    name: exactly_on_round_number
+    vendor_id: V016
+    amount: 10000.00
+    timestamp: "2025-11-17T09:48:00"
+    txn_id: T-4463
+    rule_under_test: R2
+    tests: "half-open upper bound; z ~ 1.39 so R1 does not fire"
+    expected_class: NO_FLAG
+    flips_if: "R2 interval implemented as inclusive upper bound — then FLAG"
+    predicted_class: NO_FLAG
+
+  - id: EC05
+    name: vendor_with_one_transaction
+    vendor_id: V021
+    amount: 18750.00
+    timestamp: "2025-11-20T13:30:00"
+    txn_id: T-4468
+    rule_under_test: R3
+    tests: "sd undefined with n=1; must never silently reach NO_FLAG"
+    expected_class: REVIEW
+    predicted_class: REVIEW
+
+  - id: EC06
+    name: vendor_with_two_transactions_tiny_spread
+    vendor_id: V022
+    rows:
+      - { txn_id: T-4300, amount: 1200.00, timestamp: "2025-09-04T10:00:00" }
+      - { txn_id: T-4380, amount: 1210.00, timestamp: "2025-10-06T10:15:00" }
+      - { txn_id: T-4470, amount: 1600.00, timestamp: "2025-11-21T10:30:00" }
+    rule_under_test: R3
+    tests: >
+      Without the R3 guard, sd = 7.07 from two points gives z ~ 55.9 on the
+      third row. Absurd confidence from a two-point sample.
+    expected_class: REVIEW    # all three rows
+    predicted_class: ""
+
+  - id: EC07
+    name: zero_variance_vendor_deviation
+    vendor_id: V013
+    amount: 1549.00
+    timestamp: "2025-11-24T08:12:00"
+    txn_id: T-4475
+    rule_under_test: R8
+    tests: "division by zero; z = 50/0. Must not crash or emit NaN."
+    expected_class: FLAG
+    provenance: >
+      In spec v1.0 this case was assigned FLAG 'via a fallback rule' that did
+      not exist anywhere in the rule set. R8 was written in v1.1 to make the
+      label true. See spec/errata.md D3.
+    predicted_class: NO_FLAG
+
+  - id: EC08
+    name: off_hours_normal_amount
+    vendor_id: V001
+    amount: 412.00
+    timestamp: "2025-11-13T03:07:00"     # Thursday
+    txn_id: T-4478
+    rule_under_test: R4
+    tests: "R4 fires independently of amount; z ~ 0.76"
+    expected_class: FLAG
+    predicted_class: NO_FLAG
+
+  - id: EC09
+    name: duplicate_pair
+    vendor_id: V008
+    rows:
+      - { txn_id: T-4471, amount: 2140.75, timestamp: "2025-11-18T09:22:00", invoice_no: INV-88231 }
+      - { txn_id: T-4472, amount: 2140.75, timestamp: "2025-11-18T09:24:00", invoice_no: INV-88231 }
+    rule_under_test: R5
+    tests: "forces a decision on WHICH row is flagged"
+    expected_class: "T-4471 NO_FLAG; T-4472 FLAG"
+    depends_on: "rules.yaml R5.flag_target"
+    predicted_class: FLAG
+
+  - id: EC10
+    name: missing_amount
+    vendor_id: V007
+    amount: null
+    timestamp: "2025-11-19T10:41:00"
+    txn_id: T-4489
+    rule_under_test: R6
+    tests: "must not coerce null to 0.00, must not drop silently"
+    expected_class: REJECT
+    predicted_class: REJECT
+
+  - id: EC11
+    name: malformed_timestamp
+    vendor_id: V005
+    amount: 1340.00
+    timestamp: "2025-13-45 25:99:00"     # intentionally unparseable
+    txn_id: T-4492
+    rule_under_test: R6
+    tests: "R6 on a non-amount field; parser must fail loudly"
+    expected_class: REJECT
+    predicted_class: NO_FLAG
+
+  - id: EC12
+    name: legitimate_credit_memo
+    vendor_id: V019
+    amount: -175.00
+    txn_type: CREDIT
+    timestamp: "2025-11-25T15:03:00"
+    txn_id: T-4501
+    rule_under_test: R7
+    tests: >
+      Naive abs(z) gives 2.69 — a false positive on a routine return.
+      The only case where the statistically anomalous answer and the
+      business-correct answer diverge. Highest-value case in the set.
+    expected_class: NO_FLAG
+    predicted_class: NO_FLAG
+
+  - id: EC13
+    name: sparse_history_plus_off_hours
+    vendor_id: V023          # new, single transaction
+    amount: 6400.00
+    timestamp: "2025-11-26T03:41:00"
+    rule_under_test: "R3 x R4 interaction"
+    tests: "does REVIEW short-circuit R4?"
+    expected_class: "FLAG if REVIEW non-terminal; REVIEW if terminal"
+    predicted_class: FLAG
+
+# Recommended additions once v1 runs clean:
+backlog:
+  - id: EC14
+    name: split_invoice_structuring
+    sketch: "Three V009 invoices of ~4,000 within 5 days against one PO."
+    blocked_by: "no PO/invoice relationship model in v1 — see assumption A05"
+  - id: EC15
+    name: near_duplicate_vendor_master
+    sketch: "V023 'Harbor Freight Ways' alongside V008 'Harbor Freightways'."
+    blocked_by: "vendor master assumed clean — see assumption A09"

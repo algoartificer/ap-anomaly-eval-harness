@@ -1,0 +1,126 @@
+
+# rules.yaml — detection rule set under test
+# Spec version: 1.1
+# Thresholds live here, NOT in code. A threshold change must appear as a diff
+# in this file, and the eval must be re-run against it. That diff is the
+# change-control evidence for the control.
+
+meta:
+  spec_version: "1.1"
+  output_classes: [FLAG, NO_FLAG, REVIEW, REJECT]
+  combination: ordered_pipeline    # see pipeline
+
+# ---------------------------------------------------------------------------
+# pipeline governs everything else: evaluation order.
+# ---------------------------------------------------------------------------
+pipeline:
+  name: evaluation_order
+  description: >
+    Rules apply as an ordered pipeline. The first terminal outcome wins.
+    A flat OR is not implementable: R6 must precede R1/R5 because a NULL
+    amount cannot be scored or compared, and R3/R7/R8 must precede R1
+    because they suppress it.
+  order:
+    - { rule: R6, terminal: true,  note: "data quality gate — stop on REJECT" }
+    - { rule: R7, terminal: false, note: "credit memo — suppress R1/R2, continue to R4/R5" }
+    - { rule: R3, terminal: false, note: "sparse history — emit REVIEW, suppress R1, continue to R2/R4/R5" }
+    - { rule: R8, terminal: false, note: "zero variance — runs INSTEAD OF R1" }
+    - { rule: R1, terminal: false }
+    - { rule: R2, terminal: false }
+    - { rule: R4, terminal: false }
+    - { rule: R5, terminal: false }
+
+  precedence_when_multiple_fire: "FLAG outranks REVIEW outranks NO_FLAG. REJECT outranks all."
+
+# ---------------------------------------------------------------------------
+R1:
+  name: amount_zscore
+  description: "Amount deviates from the vendor's own historical distribution."
+  threshold: 2.0
+  comparison: ">="                 # inclusive — EC01 tests exactly this
+  statistic: "abs((amount - vendor_mean) / vendor_sd)"
+  history_basis: FULL_SAMPLE       # DECISION — see docs/assumptions.md A03 / defect D2
+  guards:
+    - "suppressed when R3 fires (prior_n below minimum)"
+    - "suppressed when R7 fires (negative amount)"
+    - "replaced by R8 when vendor_sd == 0"
+  on_fire: FLAG
+
+R2:
+  name: approval_limit_avoidance
+  description: >
+    Amount sits just beneath a control limit — the structuring signature.
+    Directional: only BELOW the limit is suspicious. At or above is not.
+  limits: [5000, 10000, 25000]
+  window_fraction: 0.95            # window is [0.95 * L, L)
+  interval: half_open_lower_inclusive_upper_exclusive
+  on_fire: FLAG
+  known_false_positive_source: >
+    V009 (mean 5400) and V002 (mean 12500) place mass inside these windows
+    by construction. Expect 3-5 structural FPs in the clean 500 (defect D5).
+
+R3:
+  name: insufficient_history
+  description: "Too few prior observations to trust a mean/sd."
+  min_prior_n: 12
+  on_fire: REVIEW
+  effect: "suppress R1; continue pipeline"
+  open_decision: >
+    12 is arbitrary — roughly one year of monthly activity, but only three
+    months for V001 at 4/month. Consider a time-based window, or derive the
+    minimum from the width of the confidence interval on sd.
+
+R4:
+  name: off_hours
+  description: "Transaction posted outside normal business activity."
+  time_of_day_only:
+    allowed_window: ["06:00", "20:00"]
+    days: all
+  on_fire: FLAG
+
+R5:
+  name: duplicate_payment
+  description: "Same vendor and same amount within a short window."
+  match_fields: [vendor_id, amount]
+  window_hours: 72
+  flag_target: SECOND_AND_SUBSEQUENT   # DECISION REQUIRED
+  on_fire: FLAG
+  open_decision: >
+    'Flag both rows' is equally defensible and changes the false-positive
+    count. Whichever is chosen must be documented — EC09 depends on it.
+
+R6:
+  name: data_quality
+  description: "Required field missing or unparseable."
+  required_fields: [txn_id, vendor_id, timestamp, amount]
+  on_fire: REJECT
+  effect: "terminal — route to exception queue, do NOT score"
+  prohibited_behaviors:
+    - "coercing a null amount to 0.00"
+    - "defaulting an unparseable timestamp to epoch or now()"
+    - "silently dropping the row"
+  rationale: >
+    A REJECT is not a NO_FLAG. Rows that could not be evaluated must be
+    visibly distinguishable from rows evaluated and found clean.
+
+R7:
+  name: credit_memo
+  description: "Negative amounts are refunds/credits, not anomalies."
+  condition: "amount < 0"
+  effect: "exclude from R1 and R2; continue to R4/R5"
+  on_fire: NO_FLAG
+  ordering_note: >
+    The exclusion test must run BEFORE any abs() is applied. Two readings of
+    this rule produce different outputs for EC12 — that ambiguity is the point.
+
+R8:
+  name: zero_variance_vendor
+  description: >
+    A vendor whose price has never varied is on a fixed-fee contract.
+    Any deviation is a control exception regardless of magnitude.
+  condition: "vendor_sd == 0 AND prior_n >= 12"
+  logic: "FLAG if amount != vendor_mean, else NO_FLAG"
+  effect: "runs in place of R1 (which would divide by zero)"
+  on_fire: FLAG
+  added_in: "1.1 — closes defect D3. Absent from v1.0, which nonetheless
+    asserted an expected class for EC07. See spec/errata.md."

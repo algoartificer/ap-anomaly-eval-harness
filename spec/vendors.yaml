@@ -1,0 +1,74 @@
+
+# vendors.yaml — synthetic AP vendor population
+# Spec version: 1.1
+# Status: DRAFT — see docs/assumptions.md open decisions D1, D2 before generating.
+
+meta:
+  spec_version: "1.1"
+  currency: USD
+  amount_decimals: 2
+  period_start: "2025-01-01"
+  period_end: "2025-12-31"
+  normal_row_count: 500          # sum of vendors[].n_12mo, asserted at generation time
+  amount_floor: 0.01             # applied after draw, before rounding
+
+# Time-of-day model for all vendors unless overridden.
+# Bimodal to mimic morning/afternoon AP posting peaks.
+timestamp_defaults:
+  calendar: business_days        # Mon-Fri, no holiday calendar in v1
+  hour_bounds: ["08:00", "17:59"]
+  modes:
+    - { center: "10:45", weight: 0.5, sd_minutes: 55 }
+    - { center: "14:45", weight: 0.5, sd_minutes: 55 }
+
+# distribution: normal | lognormal | constant
+#   lognormal is REQUIRED where cv > 0.40 — a Gaussian at cv 0.90 yields
+#   negative draws ~13% of the time, which would contaminate edge case EC12.
+#   Derive lognormal mu/sigma from the target arithmetic mean and sd.
+vendors:
+  - { id: V001, name: "Northgate Office Supply",   category: office_supplies,  mean: 340,    sd: 95,    cv: 0.28, freq_per_month: 4.00, n_12mo: 48, distribution: normal }
+  - { id: V002, name: "Meridian IT Services",      category: it_consulting,    mean: 12500,  sd: 4200,  cv: 0.34, freq_per_month: 2.00, n_12mo: 24, distribution: normal }
+  - { id: V003, name: "Cardinal Facilities Mgmt",  category: janitorial,       mean: 2850,   sd: 210,   cv: 0.07, freq_per_month: 1.00, n_12mo: 12, distribution: normal }
+  - { id: V004, name: "BlueRidge Power",           category: utility,          mean: 4600,   sd: 900,   cv: 0.20, freq_per_month: 1.00, n_12mo: 12, distribution: normal, seasonality: { enabled: false, amplitude: 0.25, peak_months: [7, 8, 12, 1] } }
+  - { id: V005, name: "Apex Travel Group",         category: travel,           mean: 1150,   sd: 780,   cv: 0.68, freq_per_month: 4.00, n_12mo: 48, distribution: lognormal }
+  - { id: V006, name: "Sterling Legal LLP",        category: legal,            mean: 8900,   sd: 6400,  cv: 0.72, freq_per_month: 1.50, n_12mo: 18, distribution: lognormal }
+  - { id: V007, name: "Quill & Press Printing",    category: printing,         mean: 620,    sd: 240,   cv: 0.39, freq_per_month: 3.00, n_12mo: 36, distribution: normal }
+  - { id: V008, name: "Harbor Freightways",        category: logistics,        mean: 1980,   sd: 640,   cv: 0.32, freq_per_month: 4.58, n_12mo: 55, distribution: normal }
+  - { id: V009, name: "Vantage Staffing",          category: contract_labor,   mean: 5400,   sd: 1100,  cv: 0.20, freq_per_month: 2.00, n_12mo: 24, distribution: normal }
+  - { id: V010, name: "Lakeside Catering",         category: catering,         mean: 480,    sd: 310,   cv: 0.65, freq_per_month: 2.00, n_12mo: 24, distribution: lognormal }
+  - { id: V011, name: "Precision Parts Co",        category: industrial_parts, mean: 3200,   sd: 1450,  cv: 0.45, freq_per_month: 3.00, n_12mo: 36, distribution: lognormal }
+  - { id: V012, name: "Summit Insurance Brokers",  category: insurance,        mean: 9750,   sd: 300,   cv: 0.03, freq_per_month: 0.33, n_12mo: 4,  distribution: normal }
+  - { id: V013, name: "Cobalt Software Licensing", category: saas,             mean: 1499,   sd: 0,     cv: 0.00, freq_per_month: 1.00, n_12mo: 12, distribution: constant }
+  - { id: V014, name: "Ridgeway Construction",     category: capital_projects, mean: 24000,  sd: 15500, cv: 0.65, freq_per_month: 0.75, n_12mo: 9,  distribution: lognormal }
+  - { id: V015, name: "Delta Fuel & Fleet",        category: fuel,             mean: 890,    sd: 260,   cv: 0.29, freq_per_month: 4.00, n_12mo: 48, distribution: normal, timestamp_overrides: { calendar: all_days } }   # see D1
+  - { id: V016, name: "Orion Marketing Agency",    category: marketing,        mean: 6800,   sd: 2300,  cv: 0.34, freq_per_month: 1.00, n_12mo: 12, distribution: normal }
+  - { id: V017, name: "Pinnacle Equipment Rental", category: equipment_rental, mean: 2100,   sd: 1900,  cv: 0.90, freq_per_month: 1.50, n_12mo: 18, distribution: lognormal }
+  - { id: V018, name: "Everline Telecom",          category: telecom,          mean: 1320,   sd: 85,    cv: 0.06, freq_per_month: 1.00, n_12mo: 12, distribution: normal }
+  - { id: V019, name: "Grand Ave Hardware",        category: hardware_mro,     mean: 175,    sd: 130,   cv: 0.74, freq_per_month: 3.00, n_12mo: 36, distribution: lognormal }
+  - { id: V020, name: "Zenith Medical Supply",     category: medical_supplies, mean: 4050,   sd: 1200,  cv: 0.30, freq_per_month: 1.00, n_12mo: 12, distribution: normal }
+
+# Vendors that exist ONLY via injected edge cases. Not part of the 500.
+injected_vendors:
+  - { id: V021, name: "Halcyon Advisory",     category: consulting, note: "single transaction, no history" }
+  - { id: V022, name: "Ironwood Surveying",   category: surveying,  note: "three transactions, first two near-identical" }
+
+# Traps deliberately present in the NORMAL 500. These are not bugs.
+designed_traps:
+  - vendors: [V012, V014]
+    condition: "n_12mo < rules.R3.min_prior_n"
+    expect: "~13 normal rows classify REVIEW, not NO_FLAG"
+  - vendors: [V013]
+    condition: "sd == 0"
+    expect: "z is 0/0 for every normal row; R8 must handle, R1 must not run"
+  - vendors: [V003, V018]
+    condition: "cv < 0.10"
+    expect: "high R1 false-positive rate; ~3% amount variation reaches 2 sigma"
+  - vendors: [V017]
+    condition: "cv > 0.85"
+    expect: "low R1 sensitivity; a 3x charge barely reaches z = 2"
+  - vendors: [V002, V009]
+    condition: "mean sits above a control limit in rules.R2.limits"
+    expect: "3-5 structural R2 false positives in the clean 500 (defect D5)"
+  - vendors: [V015]
+    condition: "weekend activity under timestamp_overrides"
+    expect: "~14 rows trip R4 if R4 remains day-of-week aware (defect D1)"
