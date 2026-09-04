@@ -37,6 +37,8 @@ inside its own baseline. Production scores against *prior* history only.
 This single choice moves the REVIEW count from 13 to ~85 and silently determines
 most downstream metrics. See errata D2.
 
+**Decision and rationale** Continued with `FULL_SAMPLE` in `rules.yaml` due to exercise intent (simple business rules to have Codex/Claude handle end-to-end code) 
+
 ## A04 — No trend or seasonality · ACCEPTED · 2026-09-04
 `V004.seasonality.enabled: false`. Real AP has month-end, quarter-end and
 fiscal-year-end spikes that a static z-score will flag as legitimate anomalies.
@@ -64,6 +66,8 @@ weekend calendar. See errata D1.
 Separately, real AP posts batch/integration transactions at 02:00 routinely —
 consider ~2% legitimate off-hours activity in v2.
 
+**Decision** Kept `TIME_OF_DAY_ONLY`
+
 ## A07 — `min_prior_n: 12` is arbitrary · ACCEPTED · 2026-09-04
 Roughly "one year of monthly activity," but only three months for V001 at
 4/month. A count threshold conflates recency with sufficiency.
@@ -80,9 +84,8 @@ still cannot express "mildly unusual amount AND slightly odd timing," which is
 what most real anomalies look like. A weighted risk score is the v2 alternative
 and would turn EC02, EC04 and EC08 from binary outcomes into threshold calls.
 
-**Sub-decision still open:** R9 currently makes REVIEW *non-terminal* — a
-sparse-history vendor can still be FLAGged for off-hours or duplication.
-Ratify or reverse.
+**Sub-decision:** R9 currently makes REVIEW *non-terminal* — a
+sparse-history vendor can still be FLAGged for off-hours or duplication. Kept as is.
 
 ## A09 — Vendor master is clean · ACCEPTED · 2026-09-04
 One ID per vendor, no near-duplicates. Shell-vendor and duplicate-vendor-record
@@ -101,11 +104,12 @@ zero false positives and zero value.
 human-review-burden term (e.g. % of rows requiring human touch) to penalize
 that degenerate strategy.
 
-## A12 — R5 flag target · **OPEN**
+## A12 — R5 flag target · RESOLVED · 2026-09-04
 Flag the second row only, or both rows of a duplicate pair? Both are defensible;
 the choice changes the FP count and EC09's expected label.
 
 **Decision required.** Currently `SECOND_AND_SUBSEQUENT` provisionally.
+**Decision made** `SECOND_AND_SUBSEQUENT` is reasonable. Review of the second would necessitate review of the first 
 
 ---
 

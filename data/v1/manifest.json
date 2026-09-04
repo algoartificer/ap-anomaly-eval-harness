@@ -1,0 +1,11 @@
+{
+  "seed": 1,
+  "spec_sha256": "a6b90c78d086b49ea6a599587745eae11594bde3b329bf59908d3e978fb7d78e",
+  "generated_at_utc": "2026-09-04T21:35:51.013804+00:00",
+  "row_counts": {
+    "normal": 500,
+    "injected_cases": 13,
+    "injected_rows": 16,
+    "total": 516
+  }
+}
